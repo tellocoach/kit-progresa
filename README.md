@@ -126,7 +126,8 @@ fork, ajústalas y cambia la dirección en `instalar.sh` y en tu prompt.
 
 Una rutina básica, sin programa, para armarla en clase: le escribes a tu bot
 «pago María Soto 1500 efectivo» y la rutina lo agrega a la hoja «Pagos» de tu
-Drive y te contesta con el total del mes. Las instrucciones están en
+Drive, calcula su próximo pago y te contesta con el total del mes. Cada mañana a
+las 9 te avisa a quién le toca pagar. Las instrucciones están en
 [demo_pagos.md](demo_pagos.md).
 
 ## Privacidad
