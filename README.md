@@ -7,6 +7,9 @@ semáforo por Telegram: quién va bien, a quién revisar y por qué.
 Corre en la nube de Anthropic, así que funciona con tu computadora apagada.
 Este repositorio solo tiene código: ningún dato de alumnas.
 
+La guía de la clase, paso a paso y en PDF:
+[docs/Guia-Rutinas-IA-Gerardo-Tello.pdf](docs/Guia-Rutinas-IA-Gerardo-Tello.pdf).
+
 ## Qué necesitas
 
 - Claude Pro o Max (las rutinas usan tu suscripción).
@@ -118,6 +121,13 @@ fork, ajústalas y cambia la dirección en `instalar.sh` y en tu prompt.
 - **Verde:** todo lo demás.
 - Las preguntas de «¿requieres algún ajuste…?» que no se contestan con «no»
   aparecen como «pide ajuste de dieta» o «de rutina».
+
+## Demo en vivo: pagos por Telegram
+
+Una rutina básica, sin programa, para armarla en clase: le escribes a tu bot
+«pago María Soto 1500 efectivo» y la rutina lo agrega a la hoja «Pagos» de tu
+Drive y te contesta con el total del mes. Las instrucciones están en
+[demo_pagos.md](demo_pagos.md).
 
 ## Privacidad
 
