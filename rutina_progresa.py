@@ -40,7 +40,12 @@ CONFIG = {
     "paso_semana": 19,
     "sesiones_por_semana": 6,
     "bloques_sesion": [2, 21, 40, 59, 78, 97],  # columna donde empieza cada sesion en MC1..MC12
-    "umbral_dias_sin_registrar": 3,
+    "umbral_dias_sin_registrar": 5,   # dias sin pasos, sueno ni check-in para avisar
+    # Sistema de pagos en INTRO: fechas de cada pago y la casilla de "pagado" debajo.
+    "pagos": {"tipo": "B35", "cantidad": "C35",
+              "fechas": ["C37", "D37", "E37"], "pagado": ["C38", "D38", "E38"]},
+    "dias_aviso_pago": 7,             # avisar cuando el siguiente pago esta a 7 dias o menos
+    "dias_aviso_renovacion": 7,       # avisar cuando el mesociclo termina en 7 dias o menos
     "apego_min": 0.90,
     "apego_max": 1.10,
     "formato_fecha_formulario": "dmy",  # Google Forms en Mexico: 2/11/2026 = 2 de noviembre
@@ -185,9 +190,18 @@ class Hoja:
 def lee_expediente(ruta):
     import openpyxl
     wb = openpyxl.load_workbook(ruta, read_only=True, data_only=True)
-    intro = Hoja(wb, CONFIG["hoja_intro"], 20, 12)
+    intro = Hoja(wb, CONFIG["hoja_intro"], 40, 12)
     rev = Hoja(wb, CONFIG["hoja_revisiones"], 260, 26)
+    pagos = []
+    for ref_fecha, ref_pagado in zip(CONFIG["pagos"]["fechas"], CONFIG["pagos"]["pagado"]):
+        fecha = a_fecha(intro.ref(ref_fecha))
+        if fecha and fecha.year >= 2000:  # una fecha vacia sale como 1900 por la formula +30
+            pagado = intro.ref(ref_pagado)
+            pagos.append({"fecha": fecha, "pagado": pagado if isinstance(pagado, bool) else None})
     exp = {
+        "pagos": pagos,
+        "tipo_pago": intro.ref(CONFIG["pagos"]["tipo"]),
+        "cantidad": num(intro.ref(CONFIG["pagos"]["cantidad"])),
         "nombre": intro.ref(CONFIG["intro"]["nombre"]),
         "correo": intro.ref(CONFIG["intro"]["correo"]),
         "peso_inicial": num(intro.ref(CONFIG["intro"]["peso"])),
@@ -393,7 +407,7 @@ def analiza_alumna(item, respuestas, hoy, hay_formulario):
             mias.append(dict(r, via=via))
     mias.sort(key=lambda r: r["fecha"] or dt.datetime.min)
 
-    # ultimo dia con pasos o sueno
+    # ultimo dia con actividad: pasos, sueno o un check-in. Las series no traen fecha.
     ultimo = None
     if inicio:
         for s in exp["semanas"]:
@@ -402,8 +416,28 @@ def analiza_alumna(item, respuestas, hoy, hay_formulario):
                     dia = inicio + dt.timedelta(days=7 * (s["k"] - 1) + d)
                     if dia <= hoy and (ultimo is None or dia > ultimo):
                         ultimo = dia
-    dias_sin = (hoy - ultimo).days if ultimo else None
+    for r in mias:
+        if r["fecha"] and r["fecha"].date() <= hoy and (ultimo is None or r["fecha"].date() > ultimo):
+            ultimo = r["fecha"].date()
+    if ultimo:
+        dias_sin, sin_nada = (hoy - ultimo).days, False
+    elif inicio and inicio <= hoy:
+        dias_sin, sin_nada = (hoy - inicio).days, True  # nada registrado desde que empezo
+    else:
+        dias_sin, sin_nada = None, False
     futuras = [s["k"] for s in exp["semanas"] if s["sesiones"] and (actual is None or s["k"] > actual)]
+
+    # pagos y renovacion
+    pendientes = [p for p in exp["pagos"] if p["pagado"] is not True]
+    vencido = next((p["fecha"] for p in pendientes if p["fecha"] < hoy and p["pagado"] is False), None)
+    proximo = next((p["fecha"] for p in sorted(pendientes, key=lambda p: p["fecha"]) if p["fecha"] >= hoy), None)
+    fin_meso = inicio + dt.timedelta(days=7 * CONFIG["semanas"] - 1) if inicio else None
+    pago = {
+        "vencido": vencido, "proximo": proximo, "fin_meso": fin_meso,
+        "cantidad": exp["cantidad"], "tipo": exp["tipo_pago"],
+        "avisa_pago": bool(vencido) or (proximo is not None and (proximo - hoy).days <= CONFIG["dias_aviso_pago"]),
+        "avisa_renovacion": fin_meso is not None and (fin_meso - hoy).days <= CONFIG["dias_aviso_renovacion"],
+    }
 
     # check-in de "esta semana" = la respuesta mas reciente de los ultimos 7 dias
     recientes = [r for r in mias if r["fecha"] and 0 <= (hoy - r["fecha"].date()).days <= 7]
@@ -473,6 +507,8 @@ def analiza_alumna(item, respuestas, hoy, hay_formulario):
             "checkin": checkin, "dias_sin": dias_sin if es_actual else None,
             "faltan": faltan, "url": item.get("url", ""), "sin_inicio": inicio is None,
             "futuras": futuras if es_actual else [],
+            "sin_nada": sin_nada if es_actual else False,
+            "pago": pago if es_actual else None,
         })
     return filas
 
@@ -481,7 +517,8 @@ def analiza_alumna(item, respuestas, hoy, hay_formulario):
 def escribe_csv(filas, ruta, generado):
     cab = ["Semana", "Fechas", "Alumna", "Semáforo", "Motivo", "Mesociclo", "Sesiones",
            "Ánimo prom.", "RPE prom.", "Apego %", "Kcal prom.", "Peso", "Cambio vs inicio (kg)",
-           "Pasos/día", "Sueño h/día", "Check-in", "Días sin registrar", "Faltan", "Archivo", "Generado"]
+           "Pasos/día", "Sueño h/día", "Check-in", "Días sin registrar", "Faltan",
+           "Próximo pago", "Fin de mesociclo", "Archivo", "Generado"]
     fmt = lambda v, d=1: "" if v is None else (f"{v:.{d}f}" if isinstance(v, float) else str(v))
     with open(ruta, "w", encoding="utf-8", newline="") as f:
         w = csv.writer(f)
@@ -500,9 +537,38 @@ def escribe_csv(filas, ruta, generado):
                 fmt(r["pasos"], 0), fmt(r["sueno"]),
                 (f"sí, {ck['fecha']:%Y-%m-%d}" if ck and ck["fecha"] else "sí") if ck else "no",
                 "" if r["dias_sin"] is None else r["dias_sin"],
-                ", ".join(r["faltan"]), r["url"], generado,
+                ", ".join(r["faltan"]),
+                texto_pago(r["pago"]) if r["pago"] else "",
+                f"{r['pago']['fin_meso']:%Y-%m-%d}" if r["pago"] and r["pago"]["fin_meso"] else "",
+                r["url"], generado,
             ])
     return cab
+
+
+def texto_pago(p):
+    if p["vencido"]:
+        return f"vencido desde {p['vencido']:%Y-%m-%d}"
+    if p["proximo"]:
+        return f"{p['proximo']:%Y-%m-%d}"
+    return ""
+
+
+def linea_pago(p, hoy):
+    """Una linea corta para Telegram, o None si no hay nada que avisar."""
+    partes = []
+    monto = f" · ${miles(p['cantidad'])}" if p["cantidad"] else ""
+    if p["vencido"]:
+        partes.append(f"pago vencido desde el {fecha_corta(p['vencido'])}{monto}")
+    elif p["avisa_pago"]:
+        dias = (p["proximo"] - hoy).days
+        cuando = "hoy" if dias == 0 else "mañana" if dias == 1 else f"en {dias} días"
+        partes.append(f"pago el {fecha_corta(p['proximo'])} ({cuando}){monto}")
+    if p["avisa_renovacion"]:
+        dias = (p["fin_meso"] - hoy).days
+        cuando = (f"terminó el {fecha_corta(p['fin_meso'])}" if dias < 0
+                  else f"termina el {fecha_corta(p['fin_meso'])} ({'hoy' if dias == 0 else f'en {dias} días'})")
+        partes.append(f"su mesociclo {cuando}: toca renovar")
+    return " · ".join(partes) or None
 
 
 def bloque_alumna(r):
@@ -550,7 +616,37 @@ def bloque_alumna(r):
         lineas.append("⚠️ Faltan: " + ", ".join(r["faltan"]))
     if r["futuras"]:
         lineas.append("ℹ️ Registró en " + ", ".join(f"MC{k}" for k in r["futuras"]) + " (semana futura)")
+    if r["pago"]:
+        p = r["pago"]
+        if p["vencido"] or p["proximo"] or p["fin_meso"]:
+            datos = []
+            if p["vencido"]:
+                datos.append(f"vencido desde el {fecha_corta(p['vencido'])}")
+            elif p["proximo"]:
+                datos.append(f"próximo pago {fecha_corta(p['proximo'])}")
+            if p["fin_meso"]:
+                datos.append(f"termina mesociclo {fecha_corta(p['fin_meso'])}")
+            lineas.append("\U0001F4B3 " + " · ".join(datos))
     return "\n".join(lineas)
+
+
+def escribe_inactividad(actuales, hoy, ruta):
+    """Mensaje corto solo con las alumnas que llevan N dias o mas sin registrar.
+    Si nadie esta inactiva, el archivo queda vacio y `telegram` no manda nada."""
+    umbral = CONFIG["umbral_dias_sin_registrar"]
+    inactivas = sorted([r for r in actuales if r["dias_sin"] is not None and r["dias_sin"] >= umbral],
+                       key=lambda r: -r["dias_sin"])
+    if not inactivas:
+        open(ruta, "w", encoding="utf-8").write("")
+        return 0
+    partes = [f"\U0001F6A8 <b>Aviso de inactividad</b> — {DIAS[hoy.weekday()]} {fecha_corta(hoy)}",
+              f"{len(inactivas)} alumna{'s' if len(inactivas) != 1 else ''} con {umbral} días o más sin registrar", ""]
+    for r in inactivas:
+        motivo = "sin registros desde que empezó" if r["sin_nada"] else "sin pasos, sueño ni check-in"
+        enlace = f' · <a href="{html.escape(r["url"], quote=True)}">abrir</a>' if r["url"] else ""
+        partes.append(f"⏳ <b>{html.escape(r['alumna'])}</b>: {r['dias_sin']} días, {motivo}{enlace}")
+    open(ruta, "w", encoding="utf-8").write("\n".join(partes))
+    return len(inactivas)
 
 
 def escribe_telegram(actuales, sin_asignar, hoy, ruta):
@@ -574,6 +670,12 @@ def escribe_telegram(actuales, sin_asignar, hoy, ruta):
         verdes = [r["alumna"] for r in actuales if r["color"] == "VERDE"]
         if verdes:
             partes += ["", f"{ICONO['VERDE']} <b>En orden:</b> " + html.escape(", ".join(verdes))]
+    avisos_pago = [(r, linea_pago(r["pago"], hoy)) for r in actuales if r["pago"]]
+    avisos_pago = [(r, t) for r, t in avisos_pago if t]
+    if avisos_pago:
+        partes += ["", "\U0001F4B3 <b>Pagos y renovaciones</b>"]
+        for r, t in avisos_pago:
+            partes.append(f"· {html.escape(r['alumna'])}: {html.escape(t)}")
     if sin_asignar:
         partes += ["", "❔ <b>Check-in sin asignar</b>"]
         for r in sin_asignar:
@@ -605,13 +707,16 @@ def cmd_analizar(a):
     os.makedirs(a.salida, exist_ok=True)
     escribe_csv(filas, os.path.join(a.salida, "maestra.csv"), generado)
     cuenta = escribe_telegram(actuales, sin_asignar, hoy, os.path.join(a.salida, "telegram.html"))
+    n_inactivas = escribe_inactividad(actuales, hoy, os.path.join(a.salida, "inactividad.html"))
     push = (f"Control del coach: {ICONO['ROJO']} {cuenta['ROJO']} · {ICONO['NARANJA']} {cuenta['NARANJA']}"
             f" · {ICONO['VERDE']} {cuenta['VERDE']}. Detalle en Telegram.")
     open(os.path.join(a.salida, "push.txt"), "w", encoding="utf-8").write(push)
     informe = [f"alumnas leídas: {len(alumnas) - len(errores)} de {len(alumnas)}",
                f"filas en la bitácora: {len(filas)}",
                f"respuestas del formulario: {len(respuestas)} ({len(respuestas) - sum(r['asignada'] for r in respuestas)} sin asignar)",
-               "colores esta semana: " + ", ".join(f"{c} {n}" for c, n in cuenta.items())]
+               "colores esta semana: " + ", ".join(f"{c} {n}" for c, n in cuenta.items()),
+               f"inactivas ({CONFIG['umbral_dias_sin_registrar']}+ días sin registrar): {n_inactivas}",
+               "avisos de pago o renovación: " + str(sum(1 for r in actuales if r["pago"] and linea_pago(r["pago"], hoy)))]
     if aviso:
         informe.append("AVISO: " + aviso)
     informe += ["ERROR " + e for e in errores]
@@ -629,6 +734,9 @@ def cmd_telegram(a):
         print("telegram omitido: faltan TELEGRAM_BOT_TOKEN o TELEGRAM_CHAT_ID")
         return 0
     texto = open(a.mensaje, encoding="utf-8").read().replace("{{ENLACE}}", html.escape(a.enlace, quote=True))
+    if not texto.strip():
+        print("telegram: nada que enviar")
+        return 0
     trozos, actual = [], ""
     for linea in texto.split("\n"):
         if len(actual) + len(linea) + 1 > 3900:

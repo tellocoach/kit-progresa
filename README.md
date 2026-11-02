@@ -51,20 +51,56 @@ y toca el ícono de ajustes de tu entorno de nube.
   debe ser solo tuyo. Si el token se filtra, sácale uno nuevo con `/revoke` en
   @BotFather.
 
-## 3. Crea la rutina
+## 3. Crea las rutinas
 
+Son dos, con la misma configuración y distinto prompt y horario:
+
+| Rutina | Horario sugerido | Qué hace |
+|---|---|---|
+| Resumen semanal | El día después de tu check-in, por ejemplo sábado 8:07 a. m. | Regenera la hoja maestra y te manda el semáforo, los pagos y las renovaciones |
+| Aviso de inactividad | Diario, por ejemplo 9:07 a. m. | Solo te escribe si alguna asesorada lleva 5 días o más sin registrar |
+
+En las dos:
+
+- **Repositorio (fuente):** `https://github.com/tellocoach/kit-progresa`. La rutina
+  lo clona al empezar y usa el script de ahí.
 - **Modelo:** Haiku 5.5. La rutina solo mueve archivos; los cálculos los hace
   el script, así que gasta muy poco.
 - **Conector:** Google Drive.
-- **Instrucciones:** copia el texto de [prompt_rutina.md](prompt_rutina.md) y pon
+- **Instrucciones:** copia el prompt de [prompt_rutina.md](prompt_rutina.md) y pon
   el id de tu carpeta raíz.
-- **Horario:** tu día de check-in. Por ejemplo, el viernes a las 8:07 a. m. de
-  México.
+- **Entorno:** el que preparaste en el paso 2. No necesita script de
+  configuración.
 
 ## Cómo se actualiza
 
-Al empezar cada corrida, la rutina descarga la última versión de este
-repositorio con `instalar.sh`. No tienes que copiar nada cuando hay mejoras.
+Cada corrida clona este repositorio y corre `instalar.sh`, que copia el script
+del propio repositorio. Cuando hay mejoras, la siguiente corrida ya las usa.
+
+No uses `curl … | bash` en el prompt: las rutinas bloquean, por seguridad, el
+código descargado de internet y ejecutado al vuelo. Declarar el repositorio
+como fuente es la forma permitida.
+
+## Pagos y renovaciones
+
+El script lee el sistema de pagos de la pestaña INTRO:
+
+- **Fechas de pago:** C37, D37 y E37. La casilla de «pagado» va debajo (C38).
+- **Cantidad:** C35.
+- **Fin del mesociclo:** 12 semanas desde la fecha de inicio (D11 de
+  REVISIONES INTEGRALES).
+
+Avisa en el resumen semanal cuando el siguiente pago está a 7 días o menos,
+cuando un pago ya pasó y su casilla sigue sin marcar, y cuando el mesociclo
+termina en 7 días o menos («toca renovar»). La hoja maestra guarda el próximo
+pago y el fin del mesociclo de cada asesorada.
+
+## Inactividad
+
+Cuenta los días desde el último registro de pasos, sueño o check-in. Las series
+de entrenamiento no cuentan, porque la plantilla no les pone fecha. Si una
+asesorada no ha registrado nada desde su fecha de inicio, también avisa. El
+umbral es de 5 días y se cambia en `CONFIG`.
 
 ## Si tu plantilla es distinta
 
@@ -77,7 +113,7 @@ fork, ajústalas y cambia la dirección en `instalar.sh` y en tu prompt.
 
 - **Rojo:** dolor, malestar, lesión o enfermedad en el check-in o en las notas
   de las series; «¿cómo andas hoy?» de 5.
-- **Naranja:** cansancio o desánimo, apego fuera de 90–110 %, 3 o más días sin
+- **Naranja:** cansancio o desánimo, apego fuera de 90–110 %, 5 o más días sin
   registrar, o sin check-in en los últimos 7 días.
 - **Verde:** todo lo demás.
 - Las preguntas de «¿requieres algún ajuste…?» que no se contestan con «no»
